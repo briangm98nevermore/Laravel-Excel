@@ -1,12 +1,15 @@
+// src/Exceptions/MultipleSheetsValidationException.php
 <?php
 
 namespace Maatwebsite\Excel\Exceptions;
 
-use Illuminate\Contracts\Validation\Validator;
+use Exception;
 use Illuminate\Support\MessageBag;
-use Maatwebsite\Excel\Validators\ValidationException;
+use Illuminate\Contracts\Support\Arrayable;
+use JsonSerializable;
+use Throwable;
 
-class MultipleSheetsValidationException extends ValidationException
+class MultipleSheetsValidationException extends Exception implements Arrayable, JsonSerializable, LaravelExcelException
 {
     /**
      * The validation errors for each sheet.
@@ -19,25 +22,52 @@ class MultipleSheetsValidationException extends ValidationException
      * Create a new exception instance.
      *
      * @param  array  $sheetErrors
+     * @param  string|null  $message
+     * @param  int  $code
+     * @param  Throwable|null  $previous
      * @return void
      */
-    public function __construct(array $sheetErrors)
+    public function __construct(array $sheetErrors, ?string $message = null, int $code = 0, ?Throwable $previous = null)
     {
         $this->sheetErrors = $sheetErrors;
 
-        // Create a dummy validator for parent constructor
-        $validator = \Illuminate\Support\Facades\Validator::make(
-            ['dummy' => 'value'],
-            ['dummy' => 'sometimes']
-        );
+        $message = $message ?: $this->generateErrorMessage();
 
-        // Generate custom message
-        $message = $this->generateErrorMessage();
+        parent::__construct($message, $code, $previous);
+    }
 
-        parent::__construct($validator, $message);
+    /**
+     * Get the sheet validation errors.
+     *
+     * @return array
+     */
+    public function getSheetErrors(): array
+    {
+        return $this->sheetErrors;
+    }
 
-        // Set the actual errors using reflection
-        $this->setErrors($this->formatErrors($sheetErrors));
+    /**
+     * Get all errors as a single message bag.
+     *
+     * @return MessageBag
+     */
+    public function errors(): MessageBag
+    {
+        $errors = new MessageBag;
+
+        foreach ($this->sheetErrors as $sheetName => $sheetError) {
+            foreach ($sheetError as $field => $messages) {
+                if (is_array($messages)) {
+                    foreach ($messages as $message) {
+                        $errors->add("{$sheetName}.{$field}", $message);
+                    }
+                } else {
+                    $errors->add("{$sheetName}.{$field}", $messages);
+                }
+            }
+        }
+
+        return $errors;
     }
 
     /**
@@ -56,55 +86,6 @@ class MultipleSheetsValidationException extends ValidationException
     }
 
     /**
-     * Get the sheet validation errors.
-     *
-     * @return array
-     */
-    public function getSheetErrors(): array
-    {
-        return $this->sheetErrors;
-    }
-
-    /**
-     * Format the sheet errors into a single message bag.
-     *
-     * @param  array  $sheetErrors
-     * @return MessageBag
-     */
-    protected function formatErrors(array $sheetErrors): MessageBag
-    {
-        $errors = new MessageBag;
-
-        foreach ($sheetErrors as $sheetName => $sheetError) {
-            foreach ($sheetError as $field => $messages) {
-                if (is_array($messages)) {
-                    foreach ($messages as $message) {
-                        $errors->add("{$sheetName}.{$field}", $message);
-                    }
-                } else {
-                    $errors->add("{$sheetName}.{$field}", $messages);
-                }
-            }
-        }
-
-        return $errors;
-    }
-
-    /**
-     * Set the errors using reflection.
-     *
-     * @param  MessageBag  $errors
-     * @return void
-     */
-    protected function setErrors(MessageBag $errors): void
-    {
-        $reflector = new \ReflectionClass(parent::class);
-        $property = $reflector->getProperty('errors');
-        $property->setAccessible(true);
-        $property->setValue($this, $errors);
-    }
-
-    /**
      * Get the exception's context information.
      *
      * @return array
@@ -112,5 +93,35 @@ class MultipleSheetsValidationException extends ValidationException
     public function context(): array
     {
         return ['sheet_errors' => $this->sheetErrors];
+    }
+
+    /**
+     * Get the instance as an array.
+     *
+     * @return array
+     */
+    public function toArray(): array
+    {
+        return $this->sheetErrors;
+    }
+
+    /**
+     * Convert the object into something JSON serializable.
+     *
+     * @return array
+     */
+    public function jsonSerialize(): array
+    {
+        return $this->toArray();
+    }
+
+    /**
+     * Convert the exception to a string representation.
+     *
+     * @return string
+     */
+    public function __toString(): string
+    {
+        return $this->getMessage() . "\n" . json_encode($this->sheetErrors, JSON_PRETTY_PRINT);
     }
 }
